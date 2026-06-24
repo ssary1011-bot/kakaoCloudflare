@@ -1,18 +1,4 @@
 // Cloudflare Worker — kakaoapkmake 빌드 중계 서버
-// 사용자는 이 Worker 엔드포인트만 호출하고, GitHub 토큰/사이트는 전혀 보지 않음.
-//
-// 환경변수(Secret)로 등록:
-//   GITHUB_TOKEN : repo(kakaoapkmake)에 Contents:write, Actions:write 권한을 가진 PAT
-//
-// 엔드포인트:
-//   POST /build               body: zip 바이너리 → 커밋(빌드 트리거) → { ok, since }
-//   GET  /status?since=<ms>   → 가장 최근 워크플로 실행 상태 조회
-//   GET  /download            → 완료된 빌드의 release apk를 그대로 스트리밍해서 응답
-//
-// 주의(동시성): 저장소 1개를 공유하므로, 여러 사용자가 "동시에" 빌드를
-// 누르면 theme-payload.zip을 서로 덮어쓸 수 있음. 동시 사용자가 많아지면
-// 빌드가 섞일 수 있어 우선 단일/저빈도 사용 기준으로 동작.
-
 const OWNER = "ssary1011-bot";
 const REPO = "kakaoapkmake";
 const BRANCH = "main";
@@ -23,7 +9,8 @@ function cors() {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
   };
 }
 
@@ -60,7 +47,10 @@ function bufToBase64(buf) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "OPTIONS") return new Response(null, { headers: cors() });
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: cors() });
+    }
 
     const token = env.GITHUB_TOKEN;
     if (!token) return json({ ok: false, error: "GITHUB_TOKEN not configured" }, 500);
