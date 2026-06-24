@@ -3,13 +3,14 @@ const OWNER = "ssary1011-bot";
 const REPO = "kakaoapkmake";
 const BRANCH = "main";
 const TARGET_PATH = "theme-payload.zip";
+const CONFIG_PATH = "theme-name.json";
 const WORKFLOW_FILE = "build-apk.yml";
 
 function cors() {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Theme-Name",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -44,6 +45,20 @@ function bufToBase64(buf) {
   return btoa(binary);
 }
 
+async function putFile(path, content, token, sha) {
+  const res = await gh(`/repos/${OWNER}/${REPO}/contents/${path}`, token, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: `update ${path}`,
+      content: bufToBase64(new TextEncoder().encode(content)),
+      branch: BRANCH,
+      ...(sha ? { sha } : {}),
+    }),
+  });
+  return res;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -62,11 +77,19 @@ export default {
         if (!buf || buf.byteLength === 0) return json({ ok: false, error: "empty body" }, 400);
         if (buf.byteLength > 25 * 1024 * 1024) return json({ ok: false, error: "file too large" }, 413);
 
-        const base64Content = bufToBase64(buf);
+        // 테마 이름 헤더에서 읽기
+        const rawThemeName = request.headers.get("X-Theme-Name") || "";
+        const themeName = decodeURIComponent(rawThemeName).trim() || "kakao-theme";
 
-        let sha;
+        // theme-name.json 저장 (워크플로에서 APK 파일명으로 사용)
+        const configGetRes = await gh(`/repos/${OWNER}/${REPO}/contents/${CONFIG_PATH}?ref=${BRANCH}`, token);
+        const configSha = configGetRes.status === 200 ? (await configGetRes.json()).sha : undefined;
+        await putFile(CONFIG_PATH, JSON.stringify({ themeName }), token, configSha);
+
+        // zip 커밋
+        const base64Content = bufToBase64(buf);
         const getRes = await gh(`/repos/${OWNER}/${REPO}/contents/${TARGET_PATH}?ref=${BRANCH}`, token);
-        if (getRes.status === 200) sha = (await getRes.json()).sha;
+        const sha = getRes.status === 200 ? (await getRes.json()).sha : undefined;
 
         const beforePush = Date.now();
 
@@ -74,7 +97,7 @@ export default {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: `theme update via site (${new Date().toISOString()})`,
+            message: `theme update: ${themeName} (${new Date().toISOString()})`,
             content: base64Content,
             branch: BRANCH,
             ...(sha ? { sha } : {}),
